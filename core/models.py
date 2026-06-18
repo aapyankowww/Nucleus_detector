@@ -26,6 +26,9 @@ DEFAULT_ENHANCEMENT_PARAMS = {
     "brightness": 0.0,
     "contrast": 1.0,
     "sharpness": 1.0,
+    "white_balance": False,
+    "white_balance_strength": 0.5,
+    "white_balance_ref_bgr": None,
 }
 DETECTION_RUNTIME_PRESETS = (
     "legacy",

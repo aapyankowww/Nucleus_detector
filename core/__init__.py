@@ -61,6 +61,9 @@ from .enhancement import (
     get_default_enhancement_params,
     normalize_enhancement_params,
     percentile_normalize_rgb,
+    set_custom_hes_reference,
+    clear_custom_hes_reference,
+    get_custom_hes_reference,
 )
 from .export import export_batch_results, export_results
 from .models import (

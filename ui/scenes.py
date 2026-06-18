@@ -28,10 +28,12 @@ class ImageScene(QGraphicsScene):
     roi_created = pyqtSignal(dict)
     line_created = pyqtSignal(tuple)
     cursor_moved = pyqtSignal(float, float)
+    point_picked = pyqtSignal(float, float)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.tool_mode: ToolMode = ToolMode.NONE
+        self._picking_point: bool = False
 
         self._image_item = None
 
@@ -148,6 +150,12 @@ class ImageScene(QGraphicsScene):
                 self.addItem(center_item)
                 self._nuclei_items.append(center_item)
 
+    def start_pick_point(self) -> None:
+        self._picking_point = True
+
+    def cancel_pick_point(self) -> None:
+        self._picking_point = False
+
     def cancel_current_drawing(self) -> None:
         self._reset_temp_state()
 
@@ -158,6 +166,12 @@ class ImageScene(QGraphicsScene):
 
         pos = self._clamp_to_image(event.scenePos())
         button = event.button()
+
+        if self._picking_point and button == Qt.LeftButton:
+            self._picking_point = False
+            self.point_picked.emit(float(pos.x()), float(pos.y()))
+            event.accept()
+            return
 
         if self.tool_mode == ToolMode.POLYGON and button == Qt.RightButton and self._polygon_points:
             self._finalize_polygon()

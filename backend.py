@@ -105,6 +105,9 @@ from core import (  # noqa: F401, F403, F811
     recommend_detection_params_from_selection,
     reset_custom_model,
     run_detection_job,
+    set_custom_hes_reference,
+    clear_custom_hes_reference,
+    get_custom_hes_reference,
     set_detection_params,
     warmup_pretrained_detector,
 )

@@ -11,7 +11,7 @@ from typing import Sequence
 import cv2
 import numpy as np
 
-from .enhancement import apply_image_enhancement, percentile_normalize_rgb
+from .enhancement import apply_image_enhancement, percentile_normalize_rgb, get_custom_hes_reference
 from .models import (
     DETECTOR_BACKENDS,
     STARDIST_PREPROCESS_MODES,
@@ -637,7 +637,8 @@ class NucleiDetector:
         cfg = self.stardist_config
         work = image_bgr
         if bool(cfg.stain_norm_enabled):
-            work = _reinhard_stain_normalize(work)
+            custom_mean, custom_std = get_custom_hes_reference()
+            work = _reinhard_stain_normalize(work, ref_mean=custom_mean, ref_std=custom_std)
         rgb = cv2.cvtColor(work, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         normalized = percentile_normalize_rgb(rgb, cfg.norm_p_low, cfg.norm_p_high)
         normalized = np.clip(normalized.astype(np.float32), 0.0, 1.0)
@@ -750,14 +751,22 @@ def apply_stardist_thresholds(model, prob_thresh: float, nms_thresh: float) -> N
         return
 
 
-def _reinhard_stain_normalize(image_bgr: np.ndarray) -> np.ndarray:
+def _reinhard_stain_normalize(
+    image_bgr: np.ndarray,
+    ref_mean: np.ndarray | None = None,
+    ref_std: np.ndarray | None = None,
+) -> np.ndarray:
+    if ref_mean is None:
+        ref_mean = _HE_REF_MEAN_LAB
+    if ref_std is None:
+        ref_std = _HE_REF_STD_LAB
     lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
     for c in range(3):
         src_mean = float(lab[:, :, c].mean())
         src_std = float(lab[:, :, c].std()) + 1e-6
         lab[:, :, c] = (
-            (lab[:, :, c] - src_mean) * (_HE_REF_STD_LAB[c] / src_std)
-            + _HE_REF_MEAN_LAB[c]
+            (lab[:, :, c] - src_mean) * (ref_std[c] / src_std)
+            + ref_mean[c]
         )
     lab = np.clip(lab, 0.0, 255.0).astype(np.uint8)
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)

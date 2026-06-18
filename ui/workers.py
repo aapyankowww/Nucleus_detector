@@ -7,12 +7,14 @@ import backend
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 
-def enhancement_to_slider_values(params: dict) -> tuple[int, int, int, int]:
+def enhancement_to_slider_values(params: dict) -> tuple:
     saturation = int(round(float(params.get("saturation", 1.0)) * 100.0))
     brightness = int(round(float(params.get("brightness", 0.0))))
     contrast = int(round(float(params.get("contrast", 1.0)) * 100.0))
     sharpness = int(round(float(params.get("sharpness", 1.0)) * 100.0))
-    return saturation, brightness, contrast, sharpness
+    white_balance = bool(params.get("white_balance", False))
+    wb_strength = int(round(float(params.get("white_balance_strength", 0.5)) * 100.0))
+    return saturation, brightness, contrast, sharpness, white_balance, wb_strength
 
 
 def slider_values_to_enhancement(
@@ -20,6 +22,8 @@ def slider_values_to_enhancement(
     brightness_value: int,
     contrast_value: int,
     sharpness_value: int,
+    white_balance: bool = False,
+    white_balance_strength: int = 50,
 ) -> dict:
     return backend.normalize_enhancement_params(
         {
@@ -27,6 +31,8 @@ def slider_values_to_enhancement(
             "brightness": float(brightness_value),
             "contrast": float(contrast_value) / 100.0,
             "sharpness": float(sharpness_value) / 100.0,
+            "white_balance": white_balance,
+            "white_balance_strength": float(white_balance_strength) / 100.0,
         }
     )
 

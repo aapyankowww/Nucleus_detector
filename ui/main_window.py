@@ -101,6 +101,9 @@ class MainWindow(QMainWindow):
         self._pending_batch_folder_name: str = ""
         self._pending_batch_total_files: int = 0
         self._batch_folder_path: str | None = None
+        self._white_ref_bgr: list[float] | None = None
+        self._picking_for_wb: bool = False
+        self._picking_for_hes: bool = False
 
         self._scene: ImageScene | None = None
         self._view: CalibrationView | None = None
@@ -393,6 +396,21 @@ class MainWindow(QMainWindow):
         self.enhance_collapse_btn.setStyleSheet("text-align: left; font-weight: normal;")
         c4.addWidget(self.enhance_collapse_btn)
 
+        self.btn_pick_white = QPushButton("Выбрать белую точку")
+        self.btn_pick_white.setObjectName("btn_secondary")
+        c4.addWidget(self.btn_pick_white)
+
+        wb_row = QHBoxLayout()
+        wb_row.setContentsMargins(0, 0, 0, 0)
+        wb_row.addWidget(QLabel("Сила ББ:"))
+        self.slider_wb = QSlider(Qt.Horizontal)
+        self.slider_wb.setRange(0, 100)
+        self.slider_wb.setValue(50)
+        wb_row.addWidget(self.slider_wb, 1)
+        self.lbl_wb = QLabel("0.50")
+        wb_row.addWidget(self.lbl_wb)
+        c4.addLayout(wb_row)
+
         self.slider_saturation = QSlider(Qt.Horizontal)
         self.slider_saturation.setRange(0, 300)
         self.slider_brightness = QSlider(Qt.Horizontal)
@@ -402,11 +420,12 @@ class MainWindow(QMainWindow):
         self.slider_sharpness = QSlider(Qt.Horizontal)
         self.slider_sharpness.setRange(0, 300)
 
-        sat, bri, con, sha = enhancement_to_slider_values(self.enhancement_params)
+        sat, bri, con, sha, wb_enabled, wb_val = enhancement_to_slider_values(self.enhancement_params)
         self.slider_saturation.setValue(sat)
         self.slider_brightness.setValue(bri)
         self.slider_contrast.setValue(con)
         self.slider_sharpness.setValue(sha)
+        self.slider_wb.setValue(wb_val)
 
         self.lbl_saturation = QLabel()
         self.lbl_brightness = QLabel()
@@ -428,11 +447,23 @@ class MainWindow(QMainWindow):
             row_w.addWidget(lbl)
             enh_form.addRow(name, row_w)
         c4.addLayout(enh_form)
-        self.btn_enhance_reset = QPushButton("Сбросить")
+        self.btn_enhance_reset = QPushButton("Сбросить всё")
         self.btn_enhance_reset.setObjectName("btn_secondary")
         c4.addWidget(self.btn_enhance_reset)
         enh_form.parentWidget().setVisible(True)
         self._enhance_visible = True
+
+        self.lbl_hes_status = QLabel("")
+        self.lbl_hes_status.setObjectName("status_text")
+        self.lbl_hes_status.setWordWrap(True)
+        c4.addWidget(self.lbl_hes_status)
+
+        self.btn_pick_nucleus = QPushButton("Выбрать ядро для H\u0026E")
+        self.btn_pick_nucleus.setObjectName("btn_secondary")
+        c4.addWidget(self.btn_pick_nucleus)
+        self.btn_hes_reset = QPushButton("Сбросить H\u0026E")
+        self.btn_hes_reset.setObjectName("btn_danger")
+        c4.addWidget(self.btn_hes_reset)
 
         c5 = self._add_card(layout, "Детекция")
         self.detection_preset_combo = QComboBox()
@@ -615,6 +646,12 @@ class MainWindow(QMainWindow):
         self.btn_enhance_reset.clicked.connect(self.reset_enhancement_settings)
 
         self.enhance_collapse_btn.clicked.connect(self._toggle_enhance_collapse)
+        self.slider_wb.valueChanged.connect(self._on_enhancement_changed)
+        self.btn_pick_white.clicked.connect(self._start_pick_white)
+        self.btn_pick_nucleus.clicked.connect(self._start_pick_nucleus)
+        self.btn_hes_reset.clicked.connect(self._reset_hes_reference)
+
+        self._scene.point_picked.connect(self._on_point_picked)
 
     def _on_mode_action(self, action: QAction) -> None:
         index = self.mode_group.actions().index(action)
@@ -751,12 +788,20 @@ class MainWindow(QMainWindow):
         self._refresh_image_preview_with_enhancement()
 
     def _collect_enhancement_from_sliders(self) -> dict:
-        return slider_values_to_enhancement(
+        wb_active = self._white_ref_bgr is not None
+        params = slider_values_to_enhancement(
             int(self.slider_saturation.value()),
             int(self.slider_brightness.value()),
             int(self.slider_contrast.value()),
             int(self.slider_sharpness.value()),
+            white_balance=wb_active,
+            white_balance_strength=int(self.slider_wb.value()),
         )
+        if self._white_ref_bgr is not None:
+            old = backend.normalize_enhancement_params(params)
+            old["white_balance_ref_bgr"] = list(self._white_ref_bgr)
+            return old
+        return params
 
     def _update_enhancement_labels(self) -> None:
         params = self._collect_enhancement_from_sliders()
@@ -764,18 +809,22 @@ class MainWindow(QMainWindow):
         self.lbl_brightness.setText(f"{params['brightness']:.0f}")
         self.lbl_contrast.setText(f"{params['contrast']:.2f}")
         self.lbl_sharpness.setText(f"{params['sharpness']:.2f}")
+        self.lbl_wb.setText(f"{params['white_balance_strength']:.2f}")
 
     def reset_enhancement_settings(self) -> None:
         defaults = backend.get_default_enhancement_params()
-        sat, bri, con, sha = enhancement_to_slider_values(defaults)
+        sat, bri, con, sha, _, wb_val = enhancement_to_slider_values(defaults)
         self.slider_saturation.setValue(sat)
         self.slider_brightness.setValue(bri)
         self.slider_contrast.setValue(con)
         self.slider_sharpness.setValue(sha)
+        self.slider_wb.setValue(wb_val)
+        self._white_ref_bgr = None
+        self._on_enhancement_changed()
 
     def _set_enhancement_params(self, params: dict, refresh: bool = True) -> None:
         self.enhancement_params = backend.normalize_enhancement_params(params)
-        sat, bri, con, sha = enhancement_to_slider_values(self.enhancement_params)
+        sat, bri, con, sha, _, wb_val = enhancement_to_slider_values(self.enhancement_params)
         for slider in [self.slider_saturation, self.slider_brightness, self.slider_contrast, self.slider_sharpness]:
             slider.blockSignals(True)
         self.slider_saturation.setValue(sat)
@@ -784,9 +833,79 @@ class MainWindow(QMainWindow):
         self.slider_sharpness.setValue(sha)
         for slider in [self.slider_saturation, self.slider_brightness, self.slider_contrast, self.slider_sharpness]:
             slider.blockSignals(False)
+        self.slider_wb.setValue(wb_val)
         self._update_enhancement_labels()
         if refresh:
             self._refresh_image_preview_with_enhancement()
+
+    def _start_pick_white(self) -> None:
+        if not self.image_path:
+            QMessageBox.warning(self, "Нет изображения", "Сначала откройте изображение")
+            return
+        self._picking_for_wb = True
+        self._picking_for_hes = False
+        self._scene.start_pick_point()
+        self._view.setCursor(Qt.CrossCursor)
+        self.proc_label.setText("Статус: кликните на белую область фона")
+
+    def _start_pick_nucleus(self) -> None:
+        if not self.image_path:
+            QMessageBox.warning(self, "Нет изображения", "Сначала откройте изображение")
+            return
+        self._picking_for_wb = False
+        self._picking_for_hes = True
+        self._scene.start_pick_point()
+        self._view.setCursor(Qt.CrossCursor)
+        self.proc_label.setText("Статус: кликните на центр ядра")
+
+    def _on_point_picked(self, x: float, y: float) -> None:
+        self._view.setCursor(Qt.ArrowCursor)
+        if not self.image_path:
+            return
+        try:
+            image = backend.load_image(self.image_path)
+            h, w = image.shape[:2]
+            px = int(round(x))
+            py = int(round(y))
+            px = max(0, min(px, w - 1))
+            py = max(0, min(py, h - 1))
+
+            if self._picking_for_wb:
+                self._picking_for_wb = False
+                ref_bgr = [float(image[py, px, c]) for c in range(3)]
+                self._white_ref_bgr = ref_bgr
+                self._on_enhancement_changed()
+                self.btn_pick_white.setText(
+                    f"Белая точка: ({ref_bgr[2]:.0f},{ref_bgr[1]:.0f},{ref_bgr[0]:.0f})"
+                )
+                self.proc_label.setText("Статус: баланс белого установлен")
+            elif self._picking_for_hes:
+                self._picking_for_hes = False
+                half = 15
+                y1 = max(0, py - half)
+                y2 = min(h, py + half)
+                x1 = max(0, px - half)
+                x2 = min(w, px + half)
+                patch = image[y1:y2, x1:x2]
+                lab = cv2.cvtColor(patch, cv2.COLOR_BGR2LAB).astype(np.float32)
+                pixels = lab.reshape(-1, 3)
+                mean_lab = pixels.mean(axis=0)
+                std_lab = pixels.std(axis=0) + 1e-6
+                backend.set_custom_hes_reference(mean_lab, std_lab)
+                self.lbl_hes_status.setText(
+                    f"H&E: ядро ({px},{py})  L={mean_lab[0]:.0f} "
+                    f"A={mean_lab[1]:.0f} B={mean_lab[2]:.0f}"
+                )
+                self.proc_label.setText("Статус: H&E эталон обновлён по ядру")
+        except Exception as exc:
+            self._picking_for_wb = False
+            self._picking_for_hes = False
+            QMessageBox.critical(self, "Ошибка", str(exc))
+
+    def _reset_hes_reference(self) -> None:
+        backend.clear_custom_hes_reference()
+        self.lbl_hes_status.setText("")
+        self.proc_label.setText("Статус: H&E эталон сброшен к стандартному")
 
     def _push_undo_state(self) -> None:
         if self._restoring_state:
@@ -860,6 +979,10 @@ class MainWindow(QMainWindow):
 
     def cancel_drawing(self) -> None:
         self._scene.cancel_current_drawing()
+        self._scene.cancel_pick_point()
+        self._picking_for_wb = False
+        self._picking_for_hes = False
+        self._view.setCursor(Qt.ArrowCursor)
         self.tool_group.setExclusive(False)
         self.btn_rect.setChecked(False)
         self.btn_poly.setChecked(False)
